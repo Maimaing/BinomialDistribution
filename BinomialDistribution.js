@@ -10,7 +10,7 @@ var id = "binomial_distribution";
 var name = "Binomial Distribution";
 var description = "A binomial-theorem-based theory with Σ expansion and time factor milestones.";
 var authors = "Maimai";
-var version = 14;
+var version = 15;
 
 var tauMultiplier = 4;
 var currency;
@@ -39,13 +39,22 @@ var getQ1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0);
 var getQ2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
 var getN  = (level) => Math.max(1, level + 1);
 
-// binomial sum
-function binomialSum(nInt, x) {
-    if (nInt <= 0) return 1;
-    let sum = 1, term = 1;
+// clamp to avoid blow-up
+function clampX(xNum) {
+    if (xNum > 1) return 1;
+    if (xNum < -1) return -1;
+    return xNum;
+}
+
+// BigNumber version of Σ C(n,k) x^k (|x|≤1 前提で安定)
+function binomialSumBN(nInt, xBN) {
+    if (nInt <= 0) return BigNumber.ONE;
+    let sum = BigNumber.ONE;
+    let term = BigNumber.ONE; // k=0
     for (let k = 1; k <= nInt; ++k) {
-        term = term * (nInt - k + 1) / k * x;
-        sum += term;
+        // term *= (n-k+1)/k * x
+        term = term * BigNumber.from(nInt - k + 1) / BigNumber.from(k) * xBN;
+        sum = sum + term;
     }
     return sum;
 }
@@ -69,10 +78,10 @@ var init = () => {
         c2.getInfo = (amount) => Utils.getMathTo(getDesc(c2.level), getDesc(c2.level + amount));
     }
 
-    // === n ===
+    // === n ===  初期1e3、以降 ×1e6（めっちゃ重い）
     {
         const getDesc = (level) => "n=" + getN(level);
-        n = theory.createUpgrade(2, currency, new ExponentialCost(1e3, Math.log(1e4))); // 1000 → ×10000
+        n = theory.createUpgrade(2, currency, new ExponentialCost(1e3, Math.log(1e6)));
         n.getDescription = () => Utils.getMath(getDesc(n.level));
         n.getInfo = (amount) => Utils.getMathTo(getDesc(n.level), getDesc(n.level + amount));
     }
@@ -129,10 +138,10 @@ var init = () => {
 };
 
 var updateAvailability = () => {
-    // basic unlocks always available
+    // upgrades always available
     c1.isAvailable = c2.isAvailable = n.isAvailable = q1.isAvailable = q2.isAvailable = true;
 
-    // MS#4 only appears after MS#1–#3 all bought
+    // MS#4 出現条件：MS#1〜#3すべて購入済
     msTime.isAvailable = (msC1Exp.level == 5 && msSigma.level == 1 && msQ1Exp.level == 3);
 
     theory.invalidatePrimaryEquation();
@@ -141,31 +150,42 @@ var updateAvailability = () => {
 var tick = (elapsedTime, multiplier) => {
     const dt = BigNumber.from(elapsedTime * multiplier);
     const bonus = theory.publicationMultiplier;
+
+    // time
     t = t + dt;
 
+    // hidden exponents
     const alpha_c = C1_EXP_STEPS[Math.min(msC1Exp.level, C1_EXP_STEPS.length - 1)];
     const alpha_q = Q1_EXP_STEPS[Math.min(msQ1Exp.level, Q1_EXP_STEPS.length - 1)];
 
+    // q̇ = q1^α * q2  （BigNumberで保持）
     const vq1 = getQ1(q1.level).pow(BigNumber.from(alpha_q));
     const vq2 = getQ2(q2.level);
     const qdot = vq1 * vq2;
     q = q + qdot * dt;
 
+    // x 定義（数値は number だと危険なので BigNumber 経由でクランプ）
+    // まず number に落としてクランプ範囲だけ制御し、最終的な driver は BigNumber で。
     const qNum = q.toNumber();
     const qdotNum = qdot.toNumber();
-    const x = (msTime.level > 0)
-        ? t.toNumber() * qNum / (1 + qdotNum)
+    let xNum = (msTime.level > 0)
+        ? (t.toNumber() * qNum) / (1 + qdotNum)
         : qNum / (1 + qdotNum);
+    xNum = clampX(xNum); // |x| ≤ 1 に制限
+    const xBN = BigNumber.from(xNum);
 
+    // multipliers
     const vc1 = getC1(c1.level).pow(BigNumber.from(alpha_c));
     const vc2 = getC2(c2.level);
 
+    // driver（すべて BigNumber で計算）
     const nInt = getN(n.level);
-    const driver = (msSigma.level > 0)
-        ? binomialSum(nInt, x)
-        : Math.pow(1 + x, nInt);
+    const driverBN = (msSigma.level > 0)
+        ? binomialSumBN(nInt, xBN)
+        : (BigNumber.ONE + xBN).pow(BigNumber.from(nInt));
 
-    currency.value += bonus * vc1 * vc2 * BigNumber.from(driver) * dt;
+    currency.value += bonus * vc1 * vc2 * driverBN * dt;
+
     theory.invalidateTertiaryEquation();
 };
 
@@ -182,10 +202,10 @@ var getPrimaryEquation = () => {
 var getTertiaryEquation = () => {
     const alpha_q = Q1_EXP_STEPS[Math.min(msQ1Exp.level, Q1_EXP_STEPS.length - 1)];
     const qdotNow = getQ1(q1.level).pow(BigNumber.from(alpha_q)) * getQ2(q2.level);
-    const xNow = (msTime.level > 0)
+    let xNow = (msTime.level > 0)
         ? t.toNumber() * q.toNumber() / (1 + qdotNow.toNumber())
         : q.toNumber() / (1 + qdotNow.toNumber());
-
+    xNow = clampX(xNow);
     let s = "q=" + q.toString(3);
     if (msTime.level > 0) s = "t=" + t.toString(3) + ", " + s;
     s += ", x=" + xNow.toFixed(3);
