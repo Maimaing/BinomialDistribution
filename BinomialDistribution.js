@@ -33,10 +33,30 @@ var msTime;    // #4 time factor unlock (x=tq/(1+qdot))
 const C1_EXP_STEPS = [1.00, 1.02, 1.04, 1.06, 1.08, 1.10];
 const Q1_EXP_STEPS = [1.00, 1.05, 1.10, 1.15];
 
+// ------ helpers ------
+var getC1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0); // c1(0)=0
+var getC2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
+var getQ1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0); // q1(0)=0
+var getQ2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
+// ★ n は「level0 → n=1」になるように
+var getN  = (level) => Math.max(1, level + 1);
+
+// Σ C(n,k) x^k
+function binomialSum(nInt, x) {
+    if (nInt <= 0) return 1;
+    let sum = 1; // k=0
+    let term = 1;
+    for (let k = 1; k <= nInt; ++k) {
+        term = term * (nInt - k + 1) / k * x;
+        sum += term;
+    }
+    return sum;
+}
+
 var init = () => {
     currency = theory.createCurrency();
 
-    // === c1 (ID 0) — FirstFree, level0=0 ===
+    // === c1 ===
     {
         const getDesc = (level) => "c_1=" + getC1(level).toString(0);
         c1 = theory.createUpgrade(0, currency, new FirstFreeCost(new ExponentialCost(50, 3.38 / 1.5)));
@@ -44,7 +64,7 @@ var init = () => {
         c1.getInfo = (amount) => Utils.getMathTo(getDesc(c1.level), getDesc(c1.level + amount));
     }
 
-    // === c2 (ID 1) ===
+    // === c2 ===
     {
         const getDesc = (level) => "c_2=2^{" + level + "}";
         c2 = theory.createUpgrade(1, currency, new ExponentialCost(1e6, 3.38 * 5));
@@ -52,15 +72,15 @@ var init = () => {
         c2.getInfo = (amount) => Utils.getMathTo(getDesc(c2.level), getDesc(c2.level + amount));
     }
 
-    // === n (ID 2) ===
+    // === n ===
     {
-        const getDesc = (level) => "n=" + level;
+        const getDesc = (level) => "n=" + getN(level);
         n = theory.createUpgrade(2, currency, new ExponentialCost(1e4, 250));
         n.getDescription = () => Utils.getMath(getDesc(n.level));
         n.getInfo = (amount) => Utils.getMathTo(getDesc(n.level), getDesc(n.level + amount));
     }
 
-    // === q1 (ID 3) ===
+    // === q1 ===
     {
         const getDesc = (level) => "q_1=" + getQ1(level).toString(0);
         q1 = theory.createUpgrade(3, currency, new ExponentialCost(15, 3.38 / 3.5));
@@ -68,7 +88,7 @@ var init = () => {
         q1.getInfo = (amount) => Utils.getMathTo(getDesc(q1.level), getDesc(q1.level + amount));
     }
 
-    // === q2 (ID 4) ===
+    // === q2 ===
     {
         const getDesc = (level) => "q_2=2^{" + level + "}";
         q2 = theory.createUpgrade(4, currency, new ExponentialCost(2000, 3.38 * 4));
@@ -82,6 +102,7 @@ var init = () => {
     theory.createAutoBuyerUpgrade(2, currency, 1e25);
 
     // === milestones ===
+    // ρ thresholds: 1e(50 + 25*level)
     theory.setMilestoneCost(new CustomCost((level) => BigNumber.TEN.pow(50 + 25 * level)));
 
     // #1: c1 exponent ladder
@@ -93,7 +114,7 @@ var init = () => {
     // #2: Σ expansion
     msSigma = theory.createMilestoneUpgrade(2, 1);
     msSigma.description = "Enable binomial Σ expansion";
-    msSigma.info = "Switch (1+x)^n → Σ_{k=0}^n C(n,k)x^k";
+    msSigma.info = "Switch (1+x)^n → \\sum_{k=0}^{n} \\binom{n}{k} x^k";
     msSigma.boughtOrRefunded = (_) => theory.invalidatePrimaryEquation();
 
     // #3: q1 exponent ladder
@@ -102,7 +123,7 @@ var init = () => {
     msQ1Exp.info = "Hidden exponent on q_1 increases stepwise.";
     msQ1Exp.boughtOrRefunded = (_) => theory.invalidatePrimaryEquation();
 
-    // #4: enable t factor in x
+    // #4: enable time factor in x
     msTime = theory.createMilestoneUpgrade(4, 1);
     msTime.description = "Enable time factor in x";
     msTime.info = "x = tq / (1+\\dot q)";
@@ -114,30 +135,12 @@ var init = () => {
 var updateAvailability = () => {
     c1.isAvailable = true;
     c2.isAvailable = true;
-    n.isAvailable = true;
+    n.isAvailable  = true;
     q1.isAvailable = true;
     q2.isAvailable = true;
 
     theory.invalidatePrimaryEquation();
 };
-
-// ---- helpers ----
-var getC1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0);
-var getC2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
-var getQ1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0);
-var getQ2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
-
-// Σ C(n,k)x^k
-function binomialSum(nInt, x) {
-    if (nInt <= 0) return 1;
-    let sum = 1;
-    let term = 1;
-    for (let k = 1; k <= nInt; ++k) {
-        term = (term * (nInt - k + 1)) / k * x;
-        sum += term;
-    }
-    return sum;
-}
 
 var tick = (elapsedTime, multiplier) => {
     const dt = BigNumber.from(elapsedTime * multiplier);
@@ -169,7 +172,7 @@ var tick = (elapsedTime, multiplier) => {
     const vc2 = getC2(c2.level);
 
     // driver
-    const nInt = Math.max(0, n.level);
+    const nInt = getN(n.level); 
     const driver = (msSigma.level > 0)
         ? binomialSum(nInt, x)
         : Math.pow(1 + x, nInt);
@@ -231,6 +234,9 @@ var setInternalState = (state) => {
 var postPublish = () => {
     t = BigNumber.ZERO;
     q = BigNumber.ZERO;
+};
+
+init();
 };
 
 init();
