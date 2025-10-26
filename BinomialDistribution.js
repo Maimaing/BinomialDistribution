@@ -38,7 +38,6 @@ var getC1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0); // c1(0)=0
 var getC2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
 var getQ1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0); // q1(0)=0
 var getQ2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
-// ★ n は「level0 → n=1」になるように
 var getN  = (level) => Math.max(1, level + 1);
 
 // Σ C(n,k) x^k
