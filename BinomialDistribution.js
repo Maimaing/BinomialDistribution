@@ -8,8 +8,7 @@ requiresGameVersion("1.4.33");
 
 var id = "binomial_distribution";
 var name = "Binomial Distribution";
-var description =
-  "wip";
+var description = "wip";
 var authors = "Maimai";
 var version = 13;
 
@@ -171,7 +170,7 @@ var tick = (elapsedTime, multiplier) => {
     const vc2 = getC2(c2.level);
 
     // driver
-    const nInt = getN(n.level); 
+    const nInt = getN(n.level);
     const driver = (msSigma.level > 0)
         ? binomialSum(nInt, x)
         : Math.pow(1 + x, nInt);
@@ -233,9 +232,6 @@ var setInternalState = (state) => {
 var postPublish = () => {
     t = BigNumber.ZERO;
     q = BigNumber.ZERO;
-};
-
-init();
 };
 
 init();
