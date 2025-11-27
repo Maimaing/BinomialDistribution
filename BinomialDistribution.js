@@ -8,7 +8,7 @@ requiresGameVersion("1.4.33");
 
 var id = "binomial_distribution";
 var name = "Binomial Distribution";
-var description = "yo yo yo";
+var description = "A binomial-theorem-based theory with Σ expansion and time factor milestones.";
 var authors = "Maimai";
 var version = 22;
 
@@ -105,6 +105,13 @@ var init = () => {
     theory.createPublicationUpgrade(0, currency, 1e8);
     theory.createBuyAllUpgrade(1, currency, 1e15);
     theory.createAutoBuyerUpgrade(2, currency, 1e25);
+
+    {
+        free = theory.createSingularUpgrade(1,currency,new FreeCost());
+        free.bought = (amount) => getFreeCurrency();
+        free.description = "Test: Get \\(e5\\rho\\) free";
+    }
+    
 
     theory.setMilestoneCost(new CustomCost((level) => {
         switch(level) {
@@ -222,5 +229,8 @@ var setInternalState = (state) => {
     if (v.length > 1) q = parseBigNumber(v[1]);
 };
 var postPublish = () => { t = BigNumber.ZERO; q = BigNumber.ZERO; };
+
+var getFreeCurrency = () => currency.value *= BigNumber.from(1e5);
+
 
 init();
