@@ -4,16 +4,15 @@ import { BigNumber, parseBigNumber } from "./api/BigNumber";
 import { theory } from "./api/Theory";
 import { Utils } from "./api/Utils";
 
-var id = "binomial_distribution";
-var name = "Binomial Distribution"
-;
+var id = "binomial_theorem";
+var name = "The Binomial Theorem";
 var description =
     "Build rows of Pascal's triangle and use their binomial coefficients to grow rho. " +
     "The position k advances toward the central coefficient of row n. Later milestones " +
-    "strengthen Pascal's identity and finally replace the central term with the complete " +
-    "binomial sum: sum(C(n,j), j=0..n) = 2^n.";
+    "strengthen Pascal's identity, replace the central term with the complete binomial " +
+    "sum, and refine its higher moments near the end of the theory.";
 var authors = "Maimai";
-var version = 2;
+var version = 3;
 var releaseOrder = "10";
 
 requiresGameVersion("1.4.33");
@@ -22,11 +21,14 @@ requiresGameVersion("1.4.33");
 var TAU_EXPONENT = 0.4;
 var PUBLICATION_EXPONENT = 0.375;
 var K_TIME_DIVISOR = 60;
-var MILESTONE_COSTS = [4, 10, 16, 22, 30, 40, 56, 80, 120, 180, 260, 360, 480];
+var SYMMETRY_STEP = 0.25;
+var FULL_ROW_STEPS = 4;
+var LATE_BOOST_STEP = 0.05;
+var MILESTONE_COSTS = [4, 10, 25, 45, 65, 90, 130, 190, 250, 310, 340, 370, 400, 425, 445, 455, 465, 475, 485, 510, 535, 560, 585];
 
 var currency;
 var a1, a2, b1, b2, c1, c2, n;
-var a1Exp, b2Term, c2Term, pascalBoost, symmetry, fullRow;
+var a1Exp, b2Term, c2Term, pascalBoost, symmetry, fullRow, lateBoost;
 
 // q and k are reset on publication. The cached term is derived from n, floor(k),
 // and the milestones, so it does not need to be saved.
@@ -111,7 +113,7 @@ var init = () => {
             theory.invalidatePrimaryEquation();
             updateAvailability();
         };
-        a1Exp.canBeRefunded = (_) => b2Term.level === 0;
+        a1Exp.canBeRefunded = (_) => pascalBoost.level === 0;
     }
 
     {
@@ -133,7 +135,7 @@ var init = () => {
             theory.invalidatePrimaryEquation();
             updateAvailability();
         };
-        c2Term.canBeRefunded = (_) => pascalBoost.level === 0;
+        c2Term.canBeRefunded = (_) => a1Exp.level === 0;
     }
 
     {
@@ -150,8 +152,8 @@ var init = () => {
     }
 
     {
-        symmetry = theory.createMilestoneUpgrade(4, 3);
-        symmetry.getDescription = (_) => Utils.getMath("\\dot k\\times\\sqrt{10},\\quad\\dot q\\times(n+1)^{0.5}");
+        symmetry = theory.createMilestoneUpgrade(4, 6);
+        symmetry.getDescription = (_) => Utils.getMath("\\dot k\\times10^{0.25},\\quad\\dot q\\times(n+1)^{0.25}");
         symmetry.getInfo = (_) => Utils.getMath("\\text{Use Pascal symmetry to improve }k\\text{ and }q");
         symmetry.boughtOrRefunded = (_) => {
             rowTermIsDirty = true;
@@ -163,12 +165,25 @@ var init = () => {
     }
 
     {
-        fullRow = theory.createMilestoneUpgrade(5, 1);
-        fullRow.getDescription = (_) => Utils.getMath("\\binom{n}{k}\\rightarrow\\sum_{j=0}^{n}\\binom{n}{j}=2^n");
-        fullRow.getInfo = (_) => Utils.getMath("\\text{Use the complete binomial sum instead of one coefficient}");
+        fullRow = theory.createMilestoneUpgrade(5, FULL_ROW_STEPS);
+        fullRow.getDescription = (_) => Utils.getMath("\\binom{n}{k}\\rightsquigarrow\\sum_{j=0}^{n}\\binom{n}{j}=2^n");
+        fullRow.getInfo = (_) => Utils.getMath("\\text{Approach the complete binomial sum in four steps}");
         fullRow.boughtOrRefunded = (_) => {
             rowTermIsDirty = true;
             theory.invalidatePrimaryEquation();
+            updateAvailability();
+        };
+        fullRow.canBeRefunded = (_) => lateBoost.level === 0;
+    }
+
+    {
+        lateBoost = theory.createMilestoneUpgrade(6, 4);
+        lateBoost.getDescription = (_) => Utils.getMath("\\dot q\\times(n+1)^{0.05}");
+        lateBoost.getInfo = (_) => Utils.getMath("\\text{Refine higher binomial moments by increasing the }(n+1)\\text{ exponent}");
+        lateBoost.boughtOrRefunded = (_) => {
+            rowTermIsDirty = true;
+            theory.invalidatePrimaryEquation();
+            theory.invalidateSecondaryEquation();
             updateAvailability();
         };
     }
@@ -180,11 +195,13 @@ var updateAvailability = () => {
     b2.isAvailable = b2Term.level > 0;
     c2.isAvailable = c2Term.level > 0;
 
-    b2Term.isAvailable = a1Exp.level === a1Exp.maxLevel;
+    b2Term.isAvailable = true;
     c2Term.isAvailable = b2Term.level === b2Term.maxLevel;
-    pascalBoost.isAvailable = c2Term.level === c2Term.maxLevel;
+    a1Exp.isAvailable = c2Term.level === c2Term.maxLevel;
+    pascalBoost.isAvailable = a1Exp.level === a1Exp.maxLevel;
     symmetry.isAvailable = pascalBoost.level === pascalBoost.maxLevel;
     fullRow.isAvailable = symmetry.level === symmetry.maxLevel;
+    lateBoost.isAvailable = fullRow.level === fullRow.maxLevel;
 };
 
 var getNNumber = (level) => level + 1;
@@ -195,7 +212,8 @@ var getB2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
 var getC1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 1);
 var getC2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
 var getA1Exponent = () => 1 + 0.05 * a1Exp.level;
-var getPolynomialExponent = () => 0.25 * pascalBoost.level + 0.5 * symmetry.level;
+var getPolynomialExponent = () =>
+    0.25 * pascalBoost.level + SYMMETRY_STEP * symmetry.level + LATE_BOOST_STEP * lateBoost.level;
 
 // Uses C(n,k) = product_{i=1}^k (n-k+i)/i. Since k <= n/2 and n is
 // only a few thousand at the cap, this is fast when evaluated on changes.
@@ -212,9 +230,14 @@ var updateRowTerm = () => {
     let row = getNNumber(n.level);
     let target = Math.floor(row / 2);
     let position = Math.min(target, Math.floor(k.toNumber()));
-    let baseTerm = fullRow.level > 0
-        ? BigNumber.TWO.pow(BigNumber.from(row))
-        : getBinomialCoefficient(row, position);
+    let coefficient = getBinomialCoefficient(row, position);
+    let fullRowFraction = fullRow.level / fullRow.maxLevel;
+    let baseTerm = fullRow.level === 0
+        ? coefficient
+        : fullRow.level === fullRow.maxLevel
+            ? BigNumber.TWO.pow(BigNumber.from(row))
+            : coefficient.pow(1 - fullRowFraction)
+                * BigNumber.TWO.pow(BigNumber.from(row * fullRowFraction));
     cachedRowTerm = baseTerm * BigNumber.from(row + 1).pow(getPolynomialExponent());
     rowTermIsDirty = false;
 };
@@ -227,7 +250,7 @@ var tick = (elapsedTime, multiplier) => {
 
     if (previousPosition < target) {
         let vc2 = c2Term.level > 0 ? getC2(c2.level) : BigNumber.ONE;
-        let symmetrySpeed = BigNumber.TEN.pow(0.5 * symmetry.level);
+        let symmetrySpeed = BigNumber.TEN.pow(SYMMETRY_STEP * symmetry.level);
         let dk = dt * getC1(c1.level) * vc2 * symmetrySpeed / BigNumber.from(K_TIME_DIVISOR);
         k = (k + dk).min(BigNumber.from(target));
         if (Math.floor(k.toNumber()) !== previousPosition) rowTermIsDirty = true;
@@ -280,13 +303,16 @@ var getPrimaryEquation = () => {
     let a1Power = a1Exp.level > 0 ? "^{" + getA1Exponent().toFixed(2) + "}" : "";
     let b2Factor = b2Term.level > 0 ? "b_2" : "";
     let c2Factor = c2Term.level > 0 ? "c_2" : "";
-    let rowFactor = fullRow.level > 0
-        ? "2^n"
-        : "\\binom{n}{\\lfloor k \\rfloor}";
+    let fullRowFraction = fullRow.level / fullRow.maxLevel;
+    let rowFactor = fullRow.level === 0
+        ? "\\binom{n}{\\lfloor k \\rfloor}"
+        : fullRow.level === fullRow.maxLevel
+            ? "2^n"
+            : "\\binom{n}{\\lfloor k \\rfloor}^{" + (1 - fullRowFraction).toFixed(2) + "}(2^n)^{" + fullRowFraction.toFixed(2) + "}";
     let polynomial = getPolynomialExponent() > 0
         ? "(n+1)^{" + getPolynomialExponent().toFixed(2) + "}"
         : "";
-    let symmetryFactor = symmetry.level > 0 ? "10^{" + (0.5 * symmetry.level).toFixed(1) + "}" : "";
+    let symmetryFactor = symmetry.level > 0 ? "10^{" + (SYMMETRY_STEP * symmetry.level).toFixed(2) + "}" : "";
 
     return "\\begin{aligned}" +
         "\\dot\\rho&=m a_1" + a1Power + "a_2q\\\\ " +
