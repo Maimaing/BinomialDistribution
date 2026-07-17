@@ -4,15 +4,15 @@ import { BigNumber, parseBigNumber } from "./api/BigNumber";
 import { theory } from "./api/Theory";
 import { Utils } from "./api/Utils";
 
-var id = "binomial_theorem";
-var name = "The Binomial Theorem";
+var id = "binomial_distribution";
+var name = "Binomial Distribution";
 var description =
     "Build rows of Pascal's triangle and use their binomial coefficients to grow rho. " +
     "The position k advances toward the central coefficient of row n. Later milestones " +
-    "strengthen Pascal's identity, replace the central term with the complete binomial " +
-    "sum, and refine its higher moments near the end of the theory.";
+    "strengthen Pascal's identity, accumulate a symmetric partial row sum, and refine " +
+    "its higher moments near the end of the theory.";
 var authors = "Maimai";
-var version = 3;
+var version = 4;
 var releaseOrder = "10";
 
 requiresGameVersion("1.4.33");
@@ -75,7 +75,7 @@ var init = () => {
     // c1
     {
         let getDesc = (level) => "c_1=" + getC1(level).toString(0);
-        c1 = theory.createUpgrade(4, currency, new ExponentialCost(50, 1.2));
+        c1 = theory.createUpgrade(4, currency, new ExponentialCost(50, 1.015));
         c1.getDescription = (_) => Utils.getMath(getDesc(c1.level));
         c1.getInfo = (amount) => Utils.getMathTo(getDesc(c1.level), getDesc(c1.level + amount));
     }
@@ -83,7 +83,7 @@ var init = () => {
     // c2
     {
         let getDesc = (level) => "c_2=2^{" + level + "}";
-        c2 = theory.createUpgrade(5, currency, new ExponentialCost(1e25, 12));
+        c2 = theory.createUpgrade(5, currency, new ExponentialCost(1e25, 10.15));
         c2.getDescription = (_) => Utils.getMath(getDesc(c2.level));
         c2.getInfo = (amount) => Utils.getMathTo(getDesc(c2.level), getDesc(c2.level + amount));
     }
@@ -166,8 +166,8 @@ var init = () => {
 
     {
         fullRow = theory.createMilestoneUpgrade(5, FULL_ROW_STEPS);
-        fullRow.getDescription = (_) => Utils.getMath("\\binom{n}{k}\\rightsquigarrow\\sum_{j=0}^{n}\\binom{n}{j}=2^n");
-        fullRow.getInfo = (_) => Utils.getMath("\\text{Approach the complete binomial sum in four steps}");
+        fullRow.getDescription = (_) => Utils.getMath("\\binom{n}{k}\\to S(n,k),\\quad S(n,k_c)=2^n");
+        fullRow.getInfo = (_) => Utils.getMath("\\text{Approach the symmetric partial row sum in four steps}");
         fullRow.boughtOrRefunded = (_) => {
             rowTermIsDirty = true;
             theory.invalidatePrimaryEquation();
@@ -215,29 +215,35 @@ var getA1Exponent = () => 1 + 0.05 * a1Exp.level;
 var getPolynomialExponent = () =>
     0.25 * pascalBoost.level + SYMMETRY_STEP * symmetry.level + LATE_BOOST_STEP * lateBoost.level;
 
-// Uses C(n,k) = product_{i=1}^k (n-k+i)/i. Since k <= n/2 and n is
-// only a few thousand at the cap, this is fast when evaluated on changes.
-var getBinomialCoefficient = (row, position) => {
+// Builds C(n,i) successively with C(n,i)=C(n,i-1)(n-i+1)/i, so the
+// coefficient and symmetric partial sum are obtained in one pass.
+var getRowTerms = (row, position) => {
     let mirroredPosition = Math.min(position, row - position);
-    let result = BigNumber.ONE;
+    let coefficient = BigNumber.ONE;
+    let halfSum = BigNumber.ONE;
     for (let i = 1; i <= mirroredPosition; ++i) {
-        result = result * BigNumber.from(row - mirroredPosition + i) / BigNumber.from(i);
+        coefficient = coefficient * BigNumber.from(row - i + 1) / BigNumber.from(i);
+        halfSum += coefficient;
     }
-    return result;
+    let target = Math.floor(row / 2);
+    let partialSum = position >= target
+        ? BigNumber.TWO.pow(BigNumber.from(row))
+        : BigNumber.TWO * halfSum;
+    return { coefficient, partialSum };
 };
 
 var updateRowTerm = () => {
     let row = getNNumber(n.level);
     let target = Math.floor(row / 2);
     let position = Math.min(target, Math.floor(k.toNumber()));
-    let coefficient = getBinomialCoefficient(row, position);
+    let terms = getRowTerms(row, position);
     let fullRowFraction = fullRow.level / fullRow.maxLevel;
     let baseTerm = fullRow.level === 0
-        ? coefficient
+        ? terms.coefficient
         : fullRow.level === fullRow.maxLevel
-            ? BigNumber.TWO.pow(BigNumber.from(row))
-            : coefficient.pow(1 - fullRowFraction)
-                * BigNumber.TWO.pow(BigNumber.from(row * fullRowFraction));
+            ? terms.partialSum
+            : terms.coefficient.pow(1 - fullRowFraction)
+                * terms.partialSum.pow(fullRowFraction);
     cachedRowTerm = baseTerm * BigNumber.from(row + 1).pow(getPolynomialExponent());
     rowTermIsDirty = false;
 };
@@ -259,7 +265,9 @@ var tick = (elapsedTime, multiplier) => {
     if (rowTermIsDirty) updateRowTerm();
 
     let vb2 = b2Term.level > 0 ? getB2(b2.level) : BigNumber.ONE;
-    q += dt * getB1(b1.level) * vb2 * cachedRowTerm;
+    let vc2 = c2Term.level > 0 ? getC2(c2.level) : BigNumber.ONE;
+    let variableTerm = (getB1(b1.level) * vb2 * getC1(c1.level) * vc2).pow(0.5);
+    q += dt * variableTerm * cachedRowTerm;
 
     let production = theory.publicationMultiplier
         * getA1(a1.level).pow(getA1Exponent())
@@ -307,8 +315,8 @@ var getPrimaryEquation = () => {
     let rowFactor = fullRow.level === 0
         ? "\\binom{n}{\\lfloor k \\rfloor}"
         : fullRow.level === fullRow.maxLevel
-            ? "2^n"
-            : "\\binom{n}{\\lfloor k \\rfloor}^{" + (1 - fullRowFraction).toFixed(2) + "}(2^n)^{" + fullRowFraction.toFixed(2) + "}";
+            ? "S(n,\\lfloor k \\rfloor)"
+            : "\\binom{n}{\\lfloor k \\rfloor}^{" + (1 - fullRowFraction).toFixed(2) + "}S(n,\\lfloor k \\rfloor)^{" + fullRowFraction.toFixed(2) + "}";
     let polynomial = getPolynomialExponent() > 0
         ? "(n+1)^{" + getPolynomialExponent().toFixed(2) + "}"
         : "";
@@ -316,7 +324,7 @@ var getPrimaryEquation = () => {
 
     return "\\begin{aligned}" +
         "\\dot\\rho&=m a_1" + a1Power + "a_2q\\\\ " +
-        "\\dot q&=b_1" + b2Factor + "\\left(" + rowFactor + "\\right)" + polynomial + "\\\\ " +
+        "\\dot q&=\\left(b_1" + b2Factor + "c_1" + c2Factor + "\\right)^{1/2}\\left(" + rowFactor + "\\right)" + polynomial + "\\\\ " +
         "\\dot k&=\\frac{c_1" + c2Factor + symmetryFactor + "}{60},\\quad 0\\le k\\le\\left\\lfloor \\frac{n}{2} \\right\\rfloor" +
         "\\end{aligned}";
 };
@@ -332,8 +340,8 @@ var getTertiaryEquation = () => {
     let position = Math.min(target, Math.floor(k.toNumber()));
     return "\\begin{aligned}" +
         "q&=" + q.toString(3) + "\\\\ " +
-        "n&=" + row + ",\\quad k_0=" + position + ",\\quad k_c=" + target + "\\\\ " +
-        "B_{n,k}&=" + cachedRowTerm.toString(3) +
+        "n&=" + row + ",\\quad k=" + position + ",\\quad k_c=" + target + "\\\\ " +
+        "F_{n,k}&=" + cachedRowTerm.toString(3) +
         "\\end{aligned}";
 };
 
