@@ -1,356 +1,182 @@
 import { CustomCost, ExponentialCost, FirstFreeCost } from "./api/Costs";
-import { Localization } from "./api/Localization";
 import { BigNumber, parseBigNumber } from "./api/BigNumber";
 import { theory } from "./api/Theory";
 import { Utils } from "./api/Utils";
 
 var id = "binomial_distribution";
 var name = "Binomial Distribution";
-var description =
-    "Build rows of Pascal's triangle and use their binomial coefficients to grow rho. " +
-    "The position k advances toward the central coefficient of row n. Later milestones " +
-    "strengthen Pascal's identity, accumulate a symmetric partial row sum, and refine " +
-    "its higher moments near the end of the theory.";
+var description = "Explore Pascal's triangle, collect symmetric row sums, and unlock the second and fourth moments of the binomial distribution. Balance production against progress toward the centre of each row.";
 var authors = "Maimai";
-var version = 4;
+var version = 6;
 var releaseOrder = "10";
-
 requiresGameVersion("1.4.33");
 
-// Balancing constants. The companion simulator uses the same values.
+// Revision 6 is based on the published revision 4. It has no alternating phase.
 var TAU_EXPONENT = 0.4;
 var PUBLICATION_EXPONENT = 0.375;
-var K_TIME_DIVISOR = 60;
-var SYMMETRY_STEP = 0.25;
-var FULL_ROW_STEPS = 4;
-var LATE_BOOST_STEP = 0.05;
-var MILESTONE_COSTS = [4, 10, 25, 45, 65, 90, 130, 190, 250, 310, 340, 370, 400, 425, 445, 455, 465, 475, 485, 510, 535, 560, 585];
-
+var K_TIME_DIVISOR = 180;
+var N_COST_SLOPE = 2.5746;
+var MILESTONE_COSTS = [4,10,25,45,65,130,190,250,310,340,370,400,425,455,485,535,585];
 var currency;
 var a1, a2, b1, b2, c1, c2, n;
-var a1Exp, b2Term, c2Term, pascalBoost, symmetry, fullRow, lateBoost;
-
-// q and k are reset on publication. The cached term is derived from n, floor(k),
-// and the milestones, so it does not need to be saved.
+var a1Exp, b2Term, c2Term, pascalBoost, cExponent, fullRow, refinement, variance, fourthMoment;
 var q = BigNumber.ONE;
 var k = BigNumber.ZERO;
 var cachedRowTerm = BigNumber.ONE;
 var rowTermIsDirty = true;
+var upgrades = [];
+var milestoneOrder = [];
 
+var getA1 = level => Utils.getStepwisePowerSum(level,2,10,0);
+var getB1 = level => Utils.getStepwisePowerSum(level,2,10,0);
+var getC1 = level => Utils.getStepwisePowerSum(level,2,10,1);
+var powerOfTwo = level => BigNumber.TWO.pow(BigNumber.from(level));
+var getEta = () => 1 + 0.01*cExponent.level;
+var getNNumber = level => level+1;
+
+var makeUpgrade = (index,symbol,base,slope,getValue,free) => {
+    let cost = new ExponentialCost(base,slope);
+    let upgrade = theory.createUpgrade(index,currency,free ? new FirstFreeCost(cost) : cost);
+    upgrade.getDescription = () => Utils.getMath(symbol+"="+getValue(upgrade.level).toString(0));
+    upgrade.getInfo = amount => Utils.getMathTo(symbol+"="+getValue(upgrade.level).toString(0),symbol+"="+getValue(upgrade.level+amount).toString(0));
+    upgrade.bought = () => {rowTermIsDirty=true;};
+    upgrades.push(upgrade);
+    return upgrade;
+};
+var makeMilestone = (index,max,description,info) => {
+    let upgrade = theory.createMilestoneUpgrade(index,max);
+    upgrade.description=description;
+    upgrade.info=info;
+    upgrade.boughtOrRefunded=() => {
+        rowTermIsDirty=true;
+        theory.invalidatePrimaryEquation();
+        theory.invalidateSecondaryEquation();
+        updateAvailability();
+    };
+    return upgrade;
+};
+var updateAvailability = () => {
+    b2.isAvailable=b2Term.level>0;
+    c2.isAvailable=c2Term.level>0;
+    for(let i=0;i<milestoneOrder.length;i++) {
+        let current=milestoneOrder[i];
+        current.isAvailable=i===0||milestoneOrder[i-1].level===milestoneOrder[i-1].maxLevel;
+        current.canBeRefunded=() => i===milestoneOrder.length-1||milestoneOrder[i+1].level===0;
+    }
+};
 var init = () => {
-    currency = theory.createCurrency();
-
-    // a1
-    {
-        let getDesc = (level) => "a_1=" + getA1(level).toString(0);
-        a1 = theory.createUpgrade(0, currency, new FirstFreeCost(new ExponentialCost(10, 0.82)));
-        a1.getDescription = (_) => Utils.getMath(getDesc(a1.level));
-        a1.getInfo = (amount) => Utils.getMathTo(getDesc(a1.level), getDesc(a1.level + amount));
-    }
-
-    // a2
-    {
-        let getDesc = (level) => "a_2=2^{" + level + "}";
-        a2 = theory.createUpgrade(1, currency, new ExponentialCost(1e3, 9));
-        a2.getDescription = (_) => Utils.getMath(getDesc(a2.level));
-        a2.getInfo = (amount) => Utils.getMathTo(getDesc(a2.level), getDesc(a2.level + amount));
-    }
-
-    // b1
-    {
-        let getDesc = (level) => "b_1=" + getB1(level).toString(0);
-        b1 = theory.createUpgrade(2, currency, new ExponentialCost(1e4, 0.95));
-        b1.getDescription = (_) => Utils.getMath(getDesc(b1.level));
-        b1.getInfo = (amount) => Utils.getMathTo(getDesc(b1.level), getDesc(b1.level + amount));
-    }
-
-    // b2
-    {
-        let getDesc = (level) => "b_2=2^{" + level + "}";
-        b2 = theory.createUpgrade(3, currency, new ExponentialCost(1e15, 11));
-        b2.getDescription = (_) => Utils.getMath(getDesc(b2.level));
-        b2.getInfo = (amount) => Utils.getMathTo(getDesc(b2.level), getDesc(b2.level + amount));
-    }
-
-    // c1
-    {
-        let getDesc = (level) => "c_1=" + getC1(level).toString(0);
-        c1 = theory.createUpgrade(4, currency, new ExponentialCost(50, 1.015));
-        c1.getDescription = (_) => Utils.getMath(getDesc(c1.level));
-        c1.getInfo = (amount) => Utils.getMathTo(getDesc(c1.level), getDesc(c1.level + amount));
-    }
-
-    // c2
-    {
-        let getDesc = (level) => "c_2=2^{" + level + "}";
-        c2 = theory.createUpgrade(5, currency, new ExponentialCost(1e25, 10.15));
-        c2.getDescription = (_) => Utils.getMath(getDesc(c2.level));
-        c2.getInfo = (amount) => Utils.getMathTo(getDesc(c2.level), getDesc(c2.level + amount));
-    }
-
-    // n (the row of Pascal's triangle)
-    {
-        let getDesc = (level) => "n=" + getNNumber(level);
-        n = theory.createUpgrade(6, currency, new ExponentialCost(20, 2.5615));
-        n.getDescription = (_) => Utils.getMath(getDesc(n.level));
-        n.getInfo = (amount) => Utils.getMathTo(getDesc(n.level), getDesc(n.level + amount));
-        n.bought = (_) => rowTermIsDirty = true;
-    }
-
-    theory.createPublicationUpgrade(0, currency, 1e8);
-    theory.createBuyAllUpgrade(1, currency, 1e15);
-    theory.createAutoBuyerUpgrade(2, currency, 1e25);
-
-    theory.setMilestoneCost(new CustomCost((level) =>
-        BigNumber.from(MILESTONE_COSTS[Math.min(level, MILESTONE_COSTS.length - 1)])));
-
-    // The dependency chain makes the simple simulator strategy deterministic.
-    {
-        a1Exp = theory.createMilestoneUpgrade(0, 3);
-        a1Exp.description = Localization.getUpgradeIncCustomExpDesc("a_1", "0.05");
-        a1Exp.info = Localization.getUpgradeIncCustomExpInfo("a_1", "0.05");
-        a1Exp.boughtOrRefunded = (_) => {
-            theory.invalidatePrimaryEquation();
-            updateAvailability();
-        };
-        a1Exp.canBeRefunded = (_) => pascalBoost.level === 0;
-    }
-
-    {
-        b2Term = theory.createMilestoneUpgrade(1, 1);
-        b2Term.description = Localization.getUpgradeAddTermDesc("b_2");
-        b2Term.info = Localization.getUpgradeAddTermInfo("b_2");
-        b2Term.boughtOrRefunded = (_) => {
-            theory.invalidatePrimaryEquation();
-            updateAvailability();
-        };
-        b2Term.canBeRefunded = (_) => c2Term.level === 0;
-    }
-
-    {
-        c2Term = theory.createMilestoneUpgrade(2, 1);
-        c2Term.description = Localization.getUpgradeAddTermDesc("c_2");
-        c2Term.info = Localization.getUpgradeAddTermInfo("c_2");
-        c2Term.boughtOrRefunded = (_) => {
-            theory.invalidatePrimaryEquation();
-            updateAvailability();
-        };
-        c2Term.canBeRefunded = (_) => a1Exp.level === 0;
-    }
-
-    {
-        pascalBoost = theory.createMilestoneUpgrade(3, 4);
-        pascalBoost.getDescription = (_) => Utils.getMath("\\dot q\\times(n+1)^{0.25}");
-        pascalBoost.getInfo = (_) => Utils.getMath("\\text{Increase the exponent of }(n+1)\\text{ by }0.25");
-        pascalBoost.boughtOrRefunded = (_) => {
-            rowTermIsDirty = true;
-            theory.invalidatePrimaryEquation();
-            theory.invalidateSecondaryEquation();
-            updateAvailability();
-        };
-        pascalBoost.canBeRefunded = (_) => symmetry.level === 0;
-    }
-
-    {
-        symmetry = theory.createMilestoneUpgrade(4, 6);
-        symmetry.getDescription = (_) => Utils.getMath("\\dot k\\times10^{0.25},\\quad\\dot q\\times(n+1)^{0.25}");
-        symmetry.getInfo = (_) => Utils.getMath("\\text{Use Pascal symmetry to improve }k\\text{ and }q");
-        symmetry.boughtOrRefunded = (_) => {
-            rowTermIsDirty = true;
-            theory.invalidatePrimaryEquation();
-            theory.invalidateSecondaryEquation();
-            updateAvailability();
-        };
-        symmetry.canBeRefunded = (_) => fullRow.level === 0;
-    }
-
-    {
-        fullRow = theory.createMilestoneUpgrade(5, FULL_ROW_STEPS);
-        fullRow.getDescription = (_) => Utils.getMath("\\binom{n}{k}\\to S(n,k),\\quad S(n,k_c)=2^n");
-        fullRow.getInfo = (_) => Utils.getMath("\\text{Approach the symmetric partial row sum in four steps}");
-        fullRow.boughtOrRefunded = (_) => {
-            rowTermIsDirty = true;
-            theory.invalidatePrimaryEquation();
-            updateAvailability();
-        };
-        fullRow.canBeRefunded = (_) => lateBoost.level === 0;
-    }
-
-    {
-        lateBoost = theory.createMilestoneUpgrade(6, 4);
-        lateBoost.getDescription = (_) => Utils.getMath("\\dot q\\times(n+1)^{0.05}");
-        lateBoost.getInfo = (_) => Utils.getMath("\\text{Refine higher binomial moments by increasing the }(n+1)\\text{ exponent}");
-        lateBoost.boughtOrRefunded = (_) => {
-            rowTermIsDirty = true;
-            theory.invalidatePrimaryEquation();
-            theory.invalidateSecondaryEquation();
-            updateAvailability();
-        };
-    }
-
+    currency=theory.createCurrency();
+    a1=makeUpgrade(0,"a_1",10,0.82,getA1,true);
+    a2=makeUpgrade(1,"a_2",1e3,9,powerOfTwo,false);
+    b1=makeUpgrade(2,"b_1",1e4,0.95,getB1,false);
+    b2=makeUpgrade(3,"b_2",1e15,11,powerOfTwo,false);
+    c1=makeUpgrade(4,"c_1",50,1.015,getC1,false);
+    c2=makeUpgrade(5,"c_2",1e25,10.15,powerOfTwo,false);
+    n=makeUpgrade(6,"n",20,N_COST_SLOPE,level=>BigNumber.from(level+1),false);
+    theory.createPublicationUpgrade(0,currency,1e8);
+    theory.createBuyAllUpgrade(1,currency,1e15);
+    theory.createAutoBuyerUpgrade(2,currency,1e25);
+    theory.setMilestoneCost(new CustomCost(level=>BigNumber.from(MILESTONE_COSTS[Math.min(level,MILESTONE_COSTS.length-1)])));
+    a1Exp=makeMilestone(0,3,"Production exponent","Increase the exponent of a1 by 0.05.");
+    b2Term=makeMilestone(1,1,"Unlock b2","Include b2 in B and enable its upgrade.");
+    c2Term=makeMilestone(2,1,"Unlock c2","Include c2 in C and enable its upgrade.");
+    pascalBoost=makeMilestone(3,1,"Pascal growth","Multiply row production by n+1.");
+    cExponent=makeMilestone(4,6,"Concentration exponent","Increase eta by 0.01 in C^eta production and (C/(1+B))^eta progress.");
+    fullRow=makeMilestone(5,1,"Symmetric row sum","Replace the current coefficient with the sum of collected coefficients at both ends of the row.");
+    refinement=makeMilestone(6,2,"Fourth-moment refinement","Reduce the fourth-moment normalization exponent by 0.1.");
+    variance=makeMilestone(7,1,"Second central moment","Add 4 times the second central moment of collected coefficients, divided by n+1.");
+    fourthMoment=makeMilestone(8,1,"Fourth central moment","Add 16 times the fourth central moment, divided by (n+1)^2.");
+    milestoneOrder=[b2Term,c2Term,a1Exp,pascalBoost,cExponent,fullRow,variance,fourthMoment,refinement];
     updateAvailability();
 };
 
-var updateAvailability = () => {
-    b2.isAvailable = b2Term.level > 0;
-    c2.isAvailable = c2Term.level > 0;
-
-    b2Term.isAvailable = true;
-    c2Term.isAvailable = b2Term.level === b2Term.maxLevel;
-    a1Exp.isAvailable = c2Term.level === c2Term.maxLevel;
-    pascalBoost.isAvailable = a1Exp.level === a1Exp.maxLevel;
-    symmetry.isAvailable = pascalBoost.level === pascalBoost.maxLevel;
-    fullRow.isAvailable = symmetry.level === symmetry.maxLevel;
-    lateBoost.isAvailable = fullRow.level === fullRow.maxLevel;
-};
-
-var getNNumber = (level) => level + 1;
-var getA1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0);
-var getA2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
-var getB1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 0);
-var getB2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
-var getC1 = (level) => Utils.getStepwisePowerSum(level, 2, 10, 1);
-var getC2 = (level) => BigNumber.TWO.pow(BigNumber.from(level));
-var getA1Exponent = () => 1 + 0.05 * a1Exp.level;
-var getPolynomialExponent = () =>
-    0.25 * pascalBoost.level + SYMMETRY_STEP * symmetry.level + LATE_BOOST_STEP * lateBoost.level;
-
-// Builds C(n,i) successively with C(n,i)=C(n,i-1)(n-i+1)/i, so the
-// coefficient and symmetric partial sum are obtained in one pass.
-var getRowTerms = (row, position) => {
-    let mirroredPosition = Math.min(position, row - position);
-    let coefficient = BigNumber.ONE;
-    let halfSum = BigNumber.ONE;
-    for (let i = 1; i <= mirroredPosition; ++i) {
-        coefficient = coefficient * BigNumber.from(row - i + 1) / BigNumber.from(i);
-        halfSum += coefficient;
+// The selected set contains both ends of the row, without double counting
+// the centre. Raw moments have nonnegative summands, so progress cannot
+// reduce production. At the centre, exact binomial moment identities apply.
+var getRowTerms = (row,position) => {
+    let target=Math.floor(row/2),pos=Math.min(target,Math.max(0,Math.floor(position)));
+    let coefficient=BigNumber.ONE;
+    let sum=BigNumber.ZERO,second=BigNumber.ZERO,fourth=BigNumber.ZERO;
+    for(let j=0;j<=pos;j++) {
+        if(j>0)coefficient=coefficient*BigNumber.from(row-j+1)/BigNumber.from(j);
+        let copies=(2*j===row)?1:2;
+        let term=coefficient*BigNumber.from(copies);
+        let distance=j-row/2;
+        sum+=term;
+        second+=term*BigNumber.from(distance*distance);
+        fourth+=term*BigNumber.from(Math.pow(distance,4));
     }
-    let target = Math.floor(row / 2);
-    let partialSum = position >= target
-        ? BigNumber.TWO.pow(BigNumber.from(row))
-        : BigNumber.TWO * halfSum;
-    return { coefficient, partialSum };
+    if(pos===target) {
+        sum=powerOfTwo(row);
+        second=sum*BigNumber.from(row/4);
+        fourth=sum*BigNumber.from((3*row*row-2*row)/16);
+    }
+    return {coefficient,sum,second,fourth};
 };
-
 var updateRowTerm = () => {
-    let row = getNNumber(n.level);
-    let target = Math.floor(row / 2);
-    let position = Math.min(target, Math.floor(k.toNumber()));
-    let terms = getRowTerms(row, position);
-    let fullRowFraction = fullRow.level / fullRow.maxLevel;
-    let baseTerm = fullRow.level === 0
-        ? terms.coefficient
-        : fullRow.level === fullRow.maxLevel
-            ? terms.partialSum
-            : terms.coefficient.pow(1 - fullRowFraction)
-                * terms.partialSum.pow(fullRowFraction);
-    cachedRowTerm = baseTerm * BigNumber.from(row + 1).pow(getPolynomialExponent());
-    rowTermIsDirty = false;
+    let row=n.level+1,target=Math.floor(row/2);
+    let position=Math.min(target,Math.floor(k.toNumber()));
+    let terms=getRowTerms(row,position);
+    let reward=fullRow.level>0?terms.sum:terms.coefficient;
+    if(variance.level>0)reward+=BigNumber.from(4)*terms.second/BigNumber.from(row+1);
+    if(fourthMoment.level>0)reward+=BigNumber.from(16)*terms.fourth/BigNumber.from(row+1).pow(2-0.1*refinement.level);
+    if(pascalBoost.level>0)reward*=BigNumber.from(row+1);
+    cachedRowTerm=reward;
+    rowTermIsDirty=false;
 };
-
-var tick = (elapsedTime, multiplier) => {
-    let dt = BigNumber.from(elapsedTime * multiplier);
-    let row = getNNumber(n.level);
-    let target = Math.floor(row / 2);
-    let previousPosition = Math.floor(k.toNumber());
-
-    if (previousPosition < target) {
-        let vc2 = c2Term.level > 0 ? getC2(c2.level) : BigNumber.ONE;
-        let symmetrySpeed = BigNumber.TEN.pow(SYMMETRY_STEP * symmetry.level);
-        let dk = dt * getC1(c1.level) * vc2 * symmetrySpeed / BigNumber.from(K_TIME_DIVISOR);
-        k = (k + dk).min(BigNumber.from(target));
-        if (Math.floor(k.toNumber()) !== previousPosition) rowTermIsDirty = true;
-    }
-
-    if (rowTermIsDirty) updateRowTerm();
-
-    let vb2 = b2Term.level > 0 ? getB2(b2.level) : BigNumber.ONE;
-    let vc2 = c2Term.level > 0 ? getC2(c2.level) : BigNumber.ONE;
-    let variableTerm = (getB1(b1.level) * vb2 * getC1(c1.level) * vc2).pow(0.5);
-    q += dt * variableTerm * cachedRowTerm;
-
-    let production = theory.publicationMultiplier
-        * getA1(a1.level).pow(getA1Exponent())
-        * getA2(a2.level)
-        * q;
-    currency.value += dt * production;
-
+var tick = (elapsedTime,multiplier) => {
+    let dt=BigNumber.from(elapsedTime*multiplier);
+    let B=getB1(b1.level)*(b2Term.level>0?powerOfTwo(b2.level):BigNumber.ONE);
+    let C=getC1(c1.level)*(c2Term.level>0?powerOfTwo(c2.level):BigNumber.ONE);
+    let target=Math.floor((n.level+1)/2),oldPosition=Math.floor(k.toNumber());
+    k=(k+dt*(C/(BigNumber.ONE+B)).pow(getEta())/BigNumber.from(K_TIME_DIVISOR)).min(BigNumber.from(target));
+    if(Math.floor(k.toNumber())!==oldPosition)rowTermIsDirty=true;
+    if(rowTermIsDirty)updateRowTerm();
+    q+=dt*(B*C.pow(getEta())).pow(0.5)*cachedRowTerm;
+    currency.value+=dt*theory.publicationMultiplier*getA1(a1.level).pow(1+0.05*a1Exp.level)*powerOfTwo(a2.level)*q;
     theory.invalidateTertiaryEquation();
 };
-
-var getInternalState = () => JSON.stringify({
-    version: 1,
-    q: q.toString(),
-    k: k.toString()
-});
-
-var setInternalState = (stateString) => {
-    if (!stateString) return;
+var getInternalState = () => JSON.stringify({version:3,q:q.toString(),k:k.toString()});
+var setInternalState = stateString => {
+    if(!stateString)return;
     try {
-        let state = JSON.parse(stateString);
-        q = parseBigNumber(state.q ?? "1");
-        k = parseBigNumber(state.k ?? "0");
-    } catch (_) {
-        // Compatibility with an early space-separated development save.
-        let values = stateString.split(" ");
-        if (values.length > 0 && values[0]) q = parseBigNumber(values[0]);
-        if (values.length > 1 && values[1]) k = parseBigNumber(values[1]);
+        let state=JSON.parse(stateString);
+        q=parseBigNumber(state.q??"1");k=parseBigNumber(state.k??"0");
+    } catch(_) {
+        let state=stateString.split(" ");
+        q=parseBigNumber(state[0]||"1");k=parseBigNumber(state[1]||"0");
     }
-    rowTermIsDirty = true;
+    rowTermIsDirty=true;
 };
-
-var postPublish = () => {
-    q = BigNumber.ONE;
-    k = BigNumber.ZERO;
-    cachedRowTerm = BigNumber.ONE;
-    rowTermIsDirty = true;
-};
-
+var postPublish = () => {q=BigNumber.ONE;k=BigNumber.ZERO;rowTermIsDirty=true;};
 var getPrimaryEquation = () => {
-    theory.primaryEquationHeight = 120;
-    let a1Power = a1Exp.level > 0 ? "^{" + getA1Exponent().toFixed(2) + "}" : "";
-    let b2Factor = b2Term.level > 0 ? "b_2" : "";
-    let c2Factor = c2Term.level > 0 ? "c_2" : "";
-    let fullRowFraction = fullRow.level / fullRow.maxLevel;
-    let rowFactor = fullRow.level === 0
-        ? "\\binom{n}{\\lfloor k \\rfloor}"
-        : fullRow.level === fullRow.maxLevel
-            ? "S(n,\\lfloor k \\rfloor)"
-            : "\\binom{n}{\\lfloor k \\rfloor}^{" + (1 - fullRowFraction).toFixed(2) + "}S(n,\\lfloor k \\rfloor)^{" + fullRowFraction.toFixed(2) + "}";
-    let polynomial = getPolynomialExponent() > 0
-        ? "(n+1)^{" + getPolynomialExponent().toFixed(2) + "}"
-        : "";
-    let symmetryFactor = symmetry.level > 0 ? "10^{" + (SYMMETRY_STEP * symmetry.level).toFixed(2) + "}" : "";
-
-    return "\\begin{aligned}" +
-        "\\dot\\rho&=m a_1" + a1Power + "a_2q\\\\ " +
-        "\\dot q&=\\left(b_1" + b2Factor + "c_1" + c2Factor + "\\right)^{1/2}\\left(" + rowFactor + "\\right)" + polynomial + "\\\\ " +
-        "\\dot k&=\\frac{c_1" + c2Factor + symmetryFactor + "}{60},\\quad 0\\le k\\le\\left\\lfloor \\frac{n}{2} \\right\\rfloor" +
-        "\\end{aligned}";
+    theory.primaryEquationHeight=120;
+    return "\\begin{aligned}"+
+      "\\dot\\rho&=m a_1^{"+(1+0.05*a1Exp.level).toFixed(2)+"}a_2q\\\\ "+
+      "\\dot q&=(BC^{\\eta})^{1/2}F(n,k)\\\\ "+
+      "\\dot k&=\\frac{1}{180}\\left(\\frac{C}{1+B}\\right)^{\\eta},\\quad 0\\le k\\le\\lfloor n/2\\rfloor"+
+      "\\end{aligned}";
 };
-
 var getSecondaryEquation = () => {
-    return theory.latexSymbol + "=\\rho^{0.4},\\quad m=" + theory.latexSymbol +
-        "^{0.375},\\quad (1+x)^n=\\sum_{j=0}^{n}\\binom{n}{j}x^j";
+    let f=fullRow.level>0?"S_0":"\\binom{n}{\\lfloor k\\rfloor}";
+    if(variance.level>0)f+="+\\frac{4S_2}{n+1}";
+    if(fourthMoment.level>0)f+="+\\frac{16S_4}{(n+1)^{"+(2-0.1*refinement.level).toFixed(1)+"}}";
+    return "\\begin{aligned}B&=b_1"+(b2Term.level>0?"b_2":"")+",\\quad C=c_1"+(c2Term.level>0?"c_2":"")+",\\quad\\eta="+getEta().toFixed(2)+"\\\\ "+
+      "F&="+(pascalBoost.level>0?"(n+1)":"")+"\\left("+f+"\\right)\\\\ "+
+      "S_r&=\\sum_{j\\in A(k)}(j-n/2)^r\\binom{n}{j},\\quad\\tau=\\rho^{0.4},\\ m=\\tau^{0.375}\\end{aligned}";
 };
-
 var getTertiaryEquation = () => {
-    let row = getNNumber(n.level);
-    let target = Math.floor(row / 2);
-    let position = Math.min(target, Math.floor(k.toNumber()));
-    return "\\begin{aligned}" +
-        "q&=" + q.toString(3) + "\\\\ " +
-        "n&=" + row + ",\\quad k=" + position + ",\\quad k_c=" + target + "\\\\ " +
-        "F_{n,k}&=" + cachedRowTerm.toString(3) +
-        "\\end{aligned}";
+    let row=n.level+1,target=Math.floor(row/2),position=Math.min(target,k.toNumber());
+    let percent=target>0?100*position/target:100;
+    let mode=fourthMoment.level>0?"Fourth moment":variance.level>0?"Second moment":fullRow.level>0?"Row sum":"Coefficient";
+    return "\\begin{aligned}q&="+q.toString(3)+"\\\\ "+
+      "n&="+row+",\\quad k="+position.toFixed(2)+"\\\\ "+
+      "\\text{Centre}&="+target+",\\quad\\text{Progress}="+percent.toFixed(1)+"\\%\\\\ "+
+      "\\text{Mode}&=\\text{"+mode+"},\\quad\\eta="+getEta().toFixed(2)+"\\end{aligned}";
 };
-
-var getPublicationMultiplier = (tau) => tau.isZero
-    ? BigNumber.ONE
-    : tau.pow(PUBLICATION_EXPONENT);
-var getPublicationMultiplierFormula = (symbol) => symbol + "^{0.375}";
+var getPublicationMultiplier = tau => tau.isZero?BigNumber.ONE:tau.pow(PUBLICATION_EXPONENT);
+var getPublicationMultiplierFormula = symbol => symbol+"^{0.375}";
 var getTau = () => currency.value.pow(TAU_EXPONENT);
-var getCurrencyFromTau = (tau) => [tau.max(BigNumber.ONE).pow(1 / TAU_EXPONENT), currency.symbol];
-var get2DGraphValue = () => currency.value.sign * (BigNumber.ONE + currency.value.abs()).log10().toNumber();
-
+var getCurrencyFromTau = tau => [tau.max(BigNumber.ONE).pow(1/TAU_EXPONENT),currency.symbol];
+var get2DGraphValue = () => currency.value.sign*(BigNumber.ONE+currency.value.abs()).log10().toNumber();
 init();
