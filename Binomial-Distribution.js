@@ -51,6 +51,7 @@ var makeMilestone = (index,max,description,info) => {
         rowTermIsDirty=true;
         theory.invalidatePrimaryEquation();
         theory.invalidateSecondaryEquation();
+        theory.invalidateTertiaryEquation();
         updateAvailability();
     };
     return upgrade;
@@ -81,13 +82,13 @@ var init = () => {
     b2Term=makeMilestone(1,1,"Unlock "+Utils.getMath("b_2"),"Include "+Utils.getMath("b_2")+" in "+Utils.getMath("B")+" and enable its upgrade.");
     c2Term=makeMilestone(2,1,"Unlock "+Utils.getMath("c_2"),"Include "+Utils.getMath("c_2")+" in "+Utils.getMath("C")+" and enable its upgrade.");
     pascalBoost=makeMilestone(3,1,"Pascal growth","Multiply row production by n+1.");
-    cExponent=makeMilestone(4,6,"Concentration exponent "+Utils.getMath("\\eta"),"eta = 1.000 + 0.010 times L, where L is this milestone's level (0-6). Maximum: 1.060. Eta affects both q production and k progress.");
+    cExponent=makeMilestone(4,6,"Concentration exponent "+Utils.getMath("\\eta"),"eta = 1.00 + 0.01 times L, where L is this milestone's level (0-6). Maximum: 1.06. Eta affects both q production and k progress.");
     cExponent.getInfo = (amount) => {
         let nextLevel=Math.min(cExponent.maxLevel,Math.max(0,cExponent.level+amount));
         let nextEta=1+0.01*nextLevel;
-        return "eta = 1.000 + 0.010 times L, where L is this milestone's level (0-6). Maximum: 1.060. "+
-            "Current: L="+cExponent.level+", eta="+getEta().toFixed(3)+". "+
-            "After purchase: L="+nextLevel+", eta="+nextEta.toFixed(3)+". "+
+        return "eta = 1.00 + 0.01 times L, where L is this milestone's level (0-6). Maximum: 1.06. "+
+            "Current: L="+cExponent.level+", eta="+getEta().toFixed(2)+". "+
+            "After purchase: L="+nextLevel+", eta="+nextEta.toFixed(2)+". "+
             "Eta affects both q production and k progress.";
     };
     fullRow=makeMilestone(5,1,"Symmetric row sum","Replace the current coefficient with S0, the sum of coefficients collected at both ends of the row. The centre is counted only once.");
@@ -161,6 +162,7 @@ var getPrimaryEquation = () => {
     theory.primaryEquationHeight=85;
     theory.primaryEquationScale=0.85;
     let aPower=a1Exp.level>0?"^{"+(1+0.05*a1Exp.level).toFixed(2)+"}":"";
+    let cPower=cExponent.level>0?"^{\\eta}":"";
     let f=fullRow.level>0?"S_0":"\\binom{n}{\\lfloor k\\rfloor}";
     if(variance.level>0)f+="+M_2";
     if(fourthMoment.level>0)f+="+M_4";
@@ -168,20 +170,22 @@ var getPrimaryEquation = () => {
     // Full moment definitions are available in the milestone info panels.
     return "\\begin{aligned}"+
       "\\dot\\rho&=a_1"+aPower+"a_2q\\\\ "+
-      "\\dot q&=\\sqrt{BC^{\\eta}}F\\\\ "+
+      "\\dot q&=\\sqrt{BC"+cPower+"}F\\\\ "+
       "F&="+(pascalBoost.level>0?"(n+1)":"")+"\\left("+f+"\\right)"+
       "\\end{aligned}";
 };
 var getSecondaryEquation = () => {
     theory.secondaryEquationHeight=60;
     theory.secondaryEquationScale=0.8;
-    return "\\begin{aligned}\\dot k&=(C/(1+B))^{\\eta}/180\\\\ "+
+    let kRate=cExponent.level>0?"(C/(1+B))^{\\eta}/180":"C/(180(1+B))";
+    return "\\begin{aligned}\\dot k&="+kRate+"\\\\ "+
       "B&=b_1"+(b2Term.level>0?"b_2":"")+",\\quad C=c_1"+(c2Term.level>0?"c_2":"")+"\\end{aligned}";
 };
 var getTertiaryEquation = () => {
     theory.tertiaryEquationScale=0.8;
     let row=n.level+1,target=Math.floor(row/2),position=Math.min(target,k.toNumber());
-    return "q="+q.toString(2)+",\\quad k="+position.toFixed(3)+",\\quad\\eta ="+getEta().toFixed(3);
+    let etaValue=cExponent.level>0?",\\quad\\eta ="+getEta().toFixed(2):"";
+    return "q="+q.toString(2)+",\\quad k="+position.toFixed(3)+etaValue;
 };
 var getPublicationMultiplier = tau => tau.isZero?BigNumber.ONE:tau.pow(PUBLICATION_EXPONENT);
 var getPublicationMultiplierFormula = symbol => symbol+"^{0.375}";
