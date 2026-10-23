@@ -34,12 +34,12 @@ var powerOfTwo = level => BigNumber.TWO.pow(BigNumber.from(level));
 var getEta = () => 1 + 0.01*cExponent.level;
 var getNNumber = level => level+1;
 
-var makeUpgrade = (index,symbol,base,slope,getValue,free) => {
+var makeUpgrade = (index,symbol,base,slope,getValue,free,powerBase) => {
     let cost = new ExponentialCost(base,slope);
     let upgrade = theory.createUpgrade(index,currency,free ? new FirstFreeCost(cost) : cost);
-    upgrade.getDescription = () => Utils.getMath(symbol+"="+getValue(upgrade.level).toString(0));
+    upgrade.getDescription = (amount) => Utils.getMath(symbol+"="+(powerBase?powerBase+"^{"+upgrade.level+"}":getValue(upgrade.level).toString(0)));
     upgrade.getInfo = amount => Utils.getMathTo(symbol+"="+getValue(upgrade.level).toString(0),symbol+"="+getValue(upgrade.level+amount).toString(0));
-    upgrade.bought = () => {rowTermIsDirty=true;};
+    upgrade.bought = (amount) => {rowTermIsDirty=true;};
     upgrades.push(upgrade);
     return upgrade;
 };
@@ -47,7 +47,7 @@ var makeMilestone = (index,max,description,info) => {
     let upgrade = theory.createMilestoneUpgrade(index,max);
     upgrade.description=description;
     upgrade.info=info;
-    upgrade.boughtOrRefunded=() => {
+    upgrade.boughtOrRefunded=(amount) => {
         rowTermIsDirty=true;
         theory.invalidatePrimaryEquation();
         theory.invalidateSecondaryEquation();
@@ -61,31 +61,31 @@ var updateAvailability = () => {
     for(let i=0;i<milestoneOrder.length;i++) {
         let current=milestoneOrder[i];
         current.isAvailable=i===0||milestoneOrder[i-1].level===milestoneOrder[i-1].maxLevel;
-        current.canBeRefunded=() => i===milestoneOrder.length-1||milestoneOrder[i+1].level===0;
+        current.canBeRefunded=(amount) => i===milestoneOrder.length-1||milestoneOrder[i+1].level===0;
     }
 };
 var init = () => {
     currency=theory.createCurrency();
     a1=makeUpgrade(0,"a_1",10,0.82,getA1,true);
-    a2=makeUpgrade(1,"a_2",1e3,9,powerOfTwo,false);
+    a2=makeUpgrade(1,"a_2",1e3,9,powerOfTwo,false,2);
     b1=makeUpgrade(2,"b_1",1e4,0.95,getB1,false);
-    b2=makeUpgrade(3,"b_2",1e15,11,powerOfTwo,false);
+    b2=makeUpgrade(3,"b_2",1e15,11,powerOfTwo,false,2);
     c1=makeUpgrade(4,"c_1",50,1.015,getC1,false);
-    c2=makeUpgrade(5,"c_2",1e25,10.15,powerOfTwo,false);
+    c2=makeUpgrade(5,"c_2",1e25,10.15,powerOfTwo,false,2);
     n=makeUpgrade(6,"n",20,N_COST_SLOPE,level=>BigNumber.from(level+1),false);
     theory.createPublicationUpgrade(0,currency,1e8);
     theory.createBuyAllUpgrade(1,currency,1e15);
     theory.createAutoBuyerUpgrade(2,currency,1e25);
     theory.setMilestoneCost(new CustomCost(level=>BigNumber.from(MILESTONE_COSTS[Math.min(level,MILESTONE_COSTS.length-1)])));
     a1Exp=makeMilestone(0,3,"Production exponent","Increase the exponent of a1 by 0.05.");
-    b2Term=makeMilestone(1,1,"Unlock b2","Include b2 in B and enable its upgrade.");
-    c2Term=makeMilestone(2,1,"Unlock c2","Include c2 in C and enable its upgrade.");
+    b2Term=makeMilestone(1,1,"Unlock "+Utils.getMath("b_2"),"Include "+Utils.getMath("b_2")+" in "+Utils.getMath("B")+" and enable its upgrade.");
+    c2Term=makeMilestone(2,1,"Unlock "+Utils.getMath("c_2"),"Include "+Utils.getMath("c_2")+" in "+Utils.getMath("C")+" and enable its upgrade.");
     pascalBoost=makeMilestone(3,1,"Pascal growth","Multiply row production by n+1.");
-    cExponent=makeMilestone(4,6,"Concentration exponent","Increase eta by 0.01 in C^eta production and (C/(1+B))^eta progress.");
-    fullRow=makeMilestone(5,1,"Symmetric row sum","Replace the current coefficient with the sum of collected coefficients at both ends of the row.");
-    refinement=makeMilestone(6,2,"Fourth-moment refinement","Reduce the fourth-moment normalization exponent by 0.1.");
-    variance=makeMilestone(7,1,"Second central moment","Add 4 times the second central moment of collected coefficients, divided by n+1.");
-    fourthMoment=makeMilestone(8,1,"Fourth central moment","Add 16 times the fourth central moment, divided by (n+1)^2.");
+    cExponent=makeMilestone(4,6,"Concentration exponent","Increase eta by 0.01 for both q production and k progress.");
+    fullRow=makeMilestone(5,1,"Symmetric row sum","Replace the current coefficient with S0, the sum of coefficients collected at both ends of the row. The centre is counted only once.");
+    refinement=makeMilestone(6,2,"Fourth-moment refinement","Decrease nu by 0.1 to strengthen M4. Its denominator is (n + 1) raised to nu. Initially nu is 2.");
+    variance=makeMilestone(7,1,"Second central moment","Add M2: four times S2 divided by (n + 1). S2 sums squared distances from the row centre, weighted by the collected binomial coefficients.");
+    fourthMoment=makeMilestone(8,1,"Fourth central moment","Add M4: sixteen times S4 divided by (n + 1) raised to nu. S4 sums fourth powers of distances from the row centre, weighted by the collected coefficients. Nu starts at 2; each refinement reduces it by 0.1.");
     milestoneOrder=[b2Term,c2Term,a1Exp,pascalBoost,cExponent,fullRow,variance,fourthMoment,refinement];
     updateAvailability();
 };
@@ -150,29 +150,30 @@ var setInternalState = stateString => {
 };
 var postPublish = () => {q=BigNumber.ONE;k=BigNumber.ZERO;rowTermIsDirty=true;};
 var getPrimaryEquation = () => {
-    theory.primaryEquationHeight=120;
+    theory.primaryEquationHeight=85;
+    theory.primaryEquationScale=0.85;
+    let aPower=a1Exp.level>0?"^{"+(1+0.05*a1Exp.level).toFixed(2)+"}":"";
+    let f=fullRow.level>0?"S_0":"\\binom{n}{\\lfloor k\\rfloor}";
+    if(variance.level>0)f+="+M_2";
+    if(fourthMoment.level>0)f+="+M_4";
+    // Publication scaling is supplied by the game and omitted from the UI.
+    // Full moment definitions are available in the milestone info panels.
     return "\\begin{aligned}"+
-      "\\dot\\rho&=m a_1^{"+(1+0.05*a1Exp.level).toFixed(2)+"}a_2q\\\\ "+
-      "\\dot q&=(BC^{\\eta})^{1/2}F(n,k)\\\\ "+
-      "\\dot k&=\\frac{1}{180}\\left(\\frac{C}{1+B}\\right)^{\\eta},\\quad 0\\le k\\le\\lfloor n/2\\rfloor"+
+      "\\dot\\rho&=a_1"+aPower+"a_2q\\\\ "+
+      "\\dot q&=\\sqrt{BC^{\\eta}}F\\\\ "+
+      "F&="+(pascalBoost.level>0?"(n+1)":"")+"\\left("+f+"\\right)"+
       "\\end{aligned}";
 };
 var getSecondaryEquation = () => {
-    let f=fullRow.level>0?"S_0":"\\binom{n}{\\lfloor k\\rfloor}";
-    if(variance.level>0)f+="+\\frac{4S_2}{n+1}";
-    if(fourthMoment.level>0)f+="+\\frac{16S_4}{(n+1)^{"+(2-0.1*refinement.level).toFixed(1)+"}}";
-    return "\\begin{aligned}B&=b_1"+(b2Term.level>0?"b_2":"")+",\\quad C=c_1"+(c2Term.level>0?"c_2":"")+",\\quad\\eta="+getEta().toFixed(2)+"\\\\ "+
-      "F&="+(pascalBoost.level>0?"(n+1)":"")+"\\left("+f+"\\right)\\\\ "+
-      "S_r&=\\sum_{j\\in A(k)}(j-n/2)^r\\binom{n}{j},\\quad\\tau=\\rho^{0.4},\\ m=\\tau^{0.375}\\end{aligned}";
+    theory.secondaryEquationHeight=60;
+    theory.secondaryEquationScale=0.8;
+    return "\\begin{aligned}\\dot k&=(C/(1+B))^{\\eta}/180\\\\ "+
+      "B&=b_1"+(b2Term.level>0?"b_2":"")+",\\quad C=c_1"+(c2Term.level>0?"c_2":"")+"\\end{aligned}";
 };
 var getTertiaryEquation = () => {
+    theory.tertiaryEquationScale=0.8;
     let row=n.level+1,target=Math.floor(row/2),position=Math.min(target,k.toNumber());
-    let percent=target>0?100*position/target:100;
-    let mode=fourthMoment.level>0?"Fourth moment":variance.level>0?"Second moment":fullRow.level>0?"Row sum":"Coefficient";
-    return "\\begin{aligned}q&="+q.toString(3)+"\\\\ "+
-      "n&="+row+",\\quad k="+position.toFixed(2)+"\\\\ "+
-      "\\text{Centre}&="+target+",\\quad\\text{Progress}="+percent.toFixed(1)+"\\%\\\\ "+
-      "\\text{Mode}&=\\text{"+mode+"},\\quad\\eta="+getEta().toFixed(2)+"\\end{aligned}";
+    return "q="+q.toString(2)+",\\quad k="+position.toFixed(3)+",\\quad\\eta ="+getEta().toFixed(3);
 };
 var getPublicationMultiplier = tau => tau.isZero?BigNumber.ONE:tau.pow(PUBLICATION_EXPONENT);
 var getPublicationMultiplierFormula = symbol => symbol+"^{0.375}";
