@@ -81,7 +81,15 @@ var init = () => {
     b2Term=makeMilestone(1,1,"Unlock "+Utils.getMath("b_2"),"Include "+Utils.getMath("b_2")+" in "+Utils.getMath("B")+" and enable its upgrade.");
     c2Term=makeMilestone(2,1,"Unlock "+Utils.getMath("c_2"),"Include "+Utils.getMath("c_2")+" in "+Utils.getMath("C")+" and enable its upgrade.");
     pascalBoost=makeMilestone(3,1,"Pascal growth","Multiply row production by n+1.");
-    cExponent=makeMilestone(4,6,"Concentration exponent","Increase eta by 0.01 for both q production and k progress.");
+    cExponent=makeMilestone(4,6,"Concentration exponent "+Utils.getMath("\\eta"),"eta = 1.000 + 0.010 times L, where L is this milestone's level (0-6). Maximum: 1.060. Eta affects both q production and k progress.");
+    cExponent.getInfo = (amount) => {
+        let nextLevel=Math.min(cExponent.maxLevel,Math.max(0,cExponent.level+amount));
+        let nextEta=1+0.01*nextLevel;
+        return "eta = 1.000 + 0.010 times L, where L is this milestone's level (0-6). Maximum: 1.060. "+
+            "Current: L="+cExponent.level+", eta="+getEta().toFixed(3)+". "+
+            "After purchase: L="+nextLevel+", eta="+nextEta.toFixed(3)+". "+
+            "Eta affects both q production and k progress.";
+    };
     fullRow=makeMilestone(5,1,"Symmetric row sum","Replace the current coefficient with S0, the sum of coefficients collected at both ends of the row. The centre is counted only once.");
     refinement=makeMilestone(6,2,"Fourth-moment refinement","Decrease nu by 0.1 to strengthen M4. Its denominator is (n + 1) raised to nu. Initially nu is 2.");
     variance=makeMilestone(7,1,"Second central moment","Add M2: four times S2 divided by (n + 1). S2 sums squared distances from the row centre, weighted by the collected binomial coefficients.");
