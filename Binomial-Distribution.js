@@ -175,10 +175,10 @@ var getPrimaryEquation = () => {
       "\\end{aligned}";
 };
 var getSecondaryEquation = () => {
-    theory.secondaryEquationHeight=60;
+    theory.secondaryEquationHeight=75;
     theory.secondaryEquationScale=0.8;
-    let kRate=cExponent.level>0?"(C/(1+B))^{\\eta}/180":"C/(180(1+B))";
-    return "\\begin{aligned}\\dot k&="+kRate+",\\quad 0\\le k\\le\\lfloor n/2\\rfloor \\\\ "+
+    let kRate=cExponent.level>0?"\\frac{1}{180}\\left(\\frac{C}{1+B}\\right)^{\\eta}":"\\frac{C}{180(1+B)}";
+    return "\\begin{aligned}\\dot k&="+kRate+",\\quad 0\\le k\\le\\left\\lfloor\\frac{n}{2}\\right\\rfloor \\\\ "+
       "B&=b_1"+(b2Term.level>0?"b_2":"")+",\\quad C=c_1"+(c2Term.level>0?"c_2":"")+"\\end{aligned}";
 };
 var getTertiaryEquation = () => {
