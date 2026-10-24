@@ -7,15 +7,16 @@ var id = "binomial_distribution";
 var name = "Binomial Distribution";
 var description = "Explore Pascal's triangle, collect symmetric row sums, and unlock the second and fourth moments of the binomial distribution. Balance production against progress toward the centre of each row.";
 var authors = "Maimai";
-var version = 7;
+var version = 8;
 var releaseOrder = "10";
 requiresGameVersion("1.4.33");
 
-// Revision 7 uses a C-only concentration exponent and a speed tradeoff.
+// Revision 8 uses normalized k speed and an eta-dependent progress bonus.
 var TAU_EXPONENT = 0.4;
 var PUBLICATION_EXPONENT = 0.375;
-var K_TIME_DIVISOR = 0.5;
-var N_COST_SLOPE = 2.566;
+var K_TIME_DIVISOR = 3;
+var Q_ETA_SCALE = 10;
+var N_COST_SLOPE = 2.573;
 var MILESTONE_COSTS = [4,10,25,45,65,130,190,250,310,340,370,400,425,455,485,535,585];
 var currency;
 var a1, a2, b1, b2, c1, c2, n;
@@ -33,6 +34,7 @@ var getC1 = level => Utils.getStepwisePowerSum(level,2,10,1);
 var powerOfTwo = level => BigNumber.TWO.pow(BigNumber.from(level));
 var getEta = () => 1 + 0.01*cExponent.level;
 var getKDivisor = () => K_TIME_DIVISOR*Math.pow(2,cExponent.level);
+var getQExponent = () => Q_ETA_SCALE*0.01*cExponent.level;
 var getNNumber = level => level+1;
 
 var makeUpgrade = (index,symbol,base,slope,getValue,free,powerBase) => {
@@ -83,16 +85,16 @@ var init = () => {
     b2Term=makeMilestone(1,1,"Unlock "+Utils.getMath("b_2"),"Include "+Utils.getMath("b_2")+" in "+Utils.getMath("B")+" and enable its upgrade.");
     c2Term=makeMilestone(2,1,"Unlock "+Utils.getMath("c_2"),"Include "+Utils.getMath("c_2")+" in "+Utils.getMath("C")+" and enable its upgrade.");
     pascalBoost=makeMilestone(3,1,"Pascal growth","Multiply row production by n+1.");
-    cExponent=makeMilestone(4,6,"Concentration exponent "+Utils.getMath("\\eta"),"Each level adds 0.01 to eta and halves the base k rate. Eta applies only to C in the k equation. eta = 1.00 + 0.01 times L, where L is this milestone's level (0-6). Maximum: 1.06.");
+    cExponent=makeMilestone(4,6,"Concentration exponent "+Utils.getMath("\\eta"),"Each level adds 0.01 to eta, increases the exponent of the q progress bonus by 0.10, and halves the base k rate. The q bonus is (1 + k) raised to 10 times (eta - 1). Eta also strengthens C in the normalized k equation.");
     cExponent.getInfo = (amount) => {
         let nextLevel=Math.min(cExponent.maxLevel,Math.max(0,cExponent.level+amount));
         let nextEta=1+0.01*nextLevel;
-        return "Each level adds 0.01 to eta and halves the base k rate. "+
-            "Eta applies only to C in the k equation. "+
+        return "Each level adds 0.01 to eta, increases the q progress exponent by 0.10, and halves the base k rate. "+
+            "The q bonus is (1 + k) raised to 10 times (eta - 1). Eta also strengthens C in the normalized k equation. "+
             "eta = 1.00 + 0.01 times L, where L is this milestone's level (0-6). Maximum: 1.06. "+
-            "Current: L="+cExponent.level+", eta="+getEta().toFixed(2)+", k divisor="+getKDivisor()+". "+
-            "After purchase: L="+nextLevel+", eta="+nextEta.toFixed(2)+", k divisor="+(K_TIME_DIVISOR*Math.pow(2,nextLevel))+". "+
-            "At fixed B and C, one level multiplies k speed by half of C raised to 0.01. It can slow k when C is small.";
+            "Current: L="+cExponent.level+", eta="+getEta().toFixed(2)+", q progress exponent="+getQExponent().toFixed(2)+", k divisor="+getKDivisor()+". "+
+            "After purchase: L="+nextLevel+", eta="+nextEta.toFixed(2)+", q progress exponent="+(Q_ETA_SCALE*0.01*nextLevel).toFixed(2)+", k divisor="+(K_TIME_DIVISOR*Math.pow(2,nextLevel))+". "+
+            "The normalized C share is between 0 and 1. More C helps k approach its speed limit; one level can slow k while improving q.";
     };
     fullRow=makeMilestone(5,1,"Symmetric row sum","Replace the current coefficient with S0, the sum of coefficients collected at both ends of the row. The centre is counted only once.");
     refinement=makeMilestone(6,2,"Fourth-moment refinement","Decrease nu by 0.1 to strengthen M4. Its denominator is (n + 1) raised to nu. Initially nu is 2.");
@@ -141,10 +143,11 @@ var tick = (elapsedTime,multiplier) => {
     let B=getB1(b1.level)*(b2Term.level>0?powerOfTwo(b2.level):BigNumber.ONE);
     let C=getC1(c1.level)*(c2Term.level>0?powerOfTwo(c2.level):BigNumber.ONE);
     let target=Math.floor((n.level+1)/2),oldPosition=Math.floor(k.toNumber());
-    k=(k+dt*C.pow(getEta())/(BigNumber.ONE+B)/BigNumber.from(getKDivisor())).min(BigNumber.from(target));
+    let poweredC=C.pow(getEta());
+    k=(k+dt*poweredC/(BigNumber.ONE+B+poweredC)/BigNumber.from(getKDivisor())).min(BigNumber.from(target));
     if(Math.floor(k.toNumber())!==oldPosition)rowTermIsDirty=true;
     if(rowTermIsDirty)updateRowTerm();
-    q+=dt*(B*C).pow(0.5)*cachedRowTerm;
+    q+=dt*(B*C).pow(0.5)*cachedRowTerm*(BigNumber.ONE+k).pow(getQExponent());
     currency.value+=dt*theory.publicationMultiplier*getA1(a1.level).pow(1+0.05*a1Exp.level)*powerOfTwo(a2.level)*q;
     theory.invalidateTertiaryEquation();
 };
@@ -165,6 +168,7 @@ var getPrimaryEquation = () => {
     theory.primaryEquationHeight=85;
     theory.primaryEquationScale=0.85;
     let aPower=a1Exp.level>0?"^{"+(1+0.05*a1Exp.level).toFixed(2)+"}":"";
+    let qProgress=cExponent.level>0?"(1+k)^{10(\\eta -1)}":"";
     let f=fullRow.level>0?"S_0":"\\binom{n}{\\lfloor k\\rfloor}";
     if(variance.level>0)f+="+M_2";
     if(fourthMoment.level>0)f+="+M_4";
@@ -172,15 +176,15 @@ var getPrimaryEquation = () => {
     // Full moment definitions are available in the milestone info panels.
     return "\\begin{aligned}"+
       "\\dot\\rho&=a_1"+aPower+"a_2q\\\\ "+
-      "\\dot q&=\\sqrt{BC}F\\\\ "+
+      "\\dot q&=\\sqrt{BC}F"+qProgress+"\\\\ "+
       "F&="+(pascalBoost.level>0?"(n+1)":"")+"\\left("+f+"\\right)"+
       "\\end{aligned}";
 };
 var getSecondaryEquation = () => {
     theory.secondaryEquationHeight=75;
-    theory.secondaryEquationScale=0.8;
+    theory.secondaryEquationScale=0.75;
     let cPower=cExponent.level>0?"^{\\eta}":"";
-    let kRate="\\frac{C"+cPower+"}{"+getKDivisor()+"(1+B)}";
+    let kRate="\\frac{C"+cPower+"}{"+getKDivisor()+"(1+B+C"+cPower+")}";
     return "\\begin{array}{c}\\dot k="+kRate+",\\quad 0\\le k\\le\\left\\lfloor\\frac{n}{2}\\right\\rfloor \\\\ "+
       "B=b_1"+(b2Term.level>0?"b_2":"")+",\\quad C=c_1"+(c2Term.level>0?"c_2":"")+"\\end{array}";
 };
