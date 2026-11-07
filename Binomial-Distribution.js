@@ -7,11 +7,11 @@ var id = "binomial_distribution";
 var name = "Binomial Distribution";
 var description = "Explore Pascal's triangle, collect symmetric row sums, and unlock the second and fourth moments of the binomial distribution. Balance production against progress toward the centre of each row.";
 var authors = "Maimai";
-var version = 8;
+var version = 9;
 var releaseOrder = "10";
 requiresGameVersion("1.4.33");
 
-// Revision 8 uses normalized k speed and an eta-dependent progress bonus.
+// Revision 9 shortens milestone text and displays tau conversion; physics is unchanged.
 var TAU_EXPONENT = 0.4;
 var PUBLICATION_EXPONENT = 0.375;
 var K_TIME_DIVISOR = 3;
@@ -35,6 +35,7 @@ var powerOfTwo = level => BigNumber.TWO.pow(BigNumber.from(level));
 var getEta = () => 1 + 0.01*cExponent.level;
 var getKDivisor = () => K_TIME_DIVISOR*Math.pow(2,cExponent.level);
 var getQExponent = () => Q_ETA_SCALE*0.01*cExponent.level;
+var getM4Formula = level => "M_4=\\frac{16S_4}{(n+1)^{"+(2-0.1*level).toFixed(1)+"}}";
 var getNNumber = level => level+1;
 
 var makeUpgrade = (index,symbol,base,slope,getValue,free,powerBase) => {
@@ -81,25 +82,25 @@ var init = () => {
     theory.createBuyAllUpgrade(1,currency,1e15);
     theory.createAutoBuyerUpgrade(2,currency,1e25);
     theory.setMilestoneCost(new CustomCost(level=>BigNumber.from(MILESTONE_COSTS[Math.min(level,MILESTONE_COSTS.length-1)])));
-    a1Exp=makeMilestone(0,3,"Production exponent","Increase the exponent of a1 by 0.05.");
-    b2Term=makeMilestone(1,1,"Unlock "+Utils.getMath("b_2"),"Include "+Utils.getMath("b_2")+" in "+Utils.getMath("B")+" and enable its upgrade.");
-    c2Term=makeMilestone(2,1,"Unlock "+Utils.getMath("c_2"),"Include "+Utils.getMath("c_2")+" in "+Utils.getMath("C")+" and enable its upgrade.");
-    pascalBoost=makeMilestone(3,1,"Pascal growth","Multiply row production by n+1.");
-    cExponent=makeMilestone(4,6,"Concentration exponent "+Utils.getMath("\\eta"),"Each level adds 0.01 to eta, increases the exponent of the q progress bonus by 0.10, and halves the base k rate. The q bonus is (1 + k) raised to 10 times (eta - 1). Eta also strengthens C in the normalized k equation.");
+    a1Exp=makeMilestone(0,3,"Increase "+Utils.getMath("a_1")+" exponent","Add 0.05 to the exponent of "+Utils.getMath("a_1")+".");
+    b2Term=makeMilestone(1,1,"Unlock "+Utils.getMath("b_2"),"Multiply "+Utils.getMath("B")+" by "+Utils.getMath("b_2")+".");
+    c2Term=makeMilestone(2,1,"Unlock "+Utils.getMath("c_2"),"Multiply "+Utils.getMath("C")+" by "+Utils.getMath("c_2")+".");
+    pascalBoost=makeMilestone(3,1,"Pascal growth","Multiply the row term by "+Utils.getMath("n+1")+".");
+    cExponent=makeMilestone(4,6,"Increase "+Utils.getMath("\\eta")+" by 0.01","Per level: eta +0.01; (1+k) exponent +0.10; k speed limit /2.");
     cExponent.getInfo = (amount) => {
         let nextLevel=Math.min(cExponent.maxLevel,Math.max(0,cExponent.level+amount));
         let nextEta=1+0.01*nextLevel;
-        return "Each level adds 0.01 to eta, increases the q progress exponent by 0.10, and halves the base k rate. "+
-            "The q bonus is (1 + k) raised to 10 times (eta - 1). Eta also strengthens C in the normalized k equation. "+
-            "eta = 1.00 + 0.01 times L, where L is this milestone's level (0-6). Maximum: 1.06. "+
-            "Current: L="+cExponent.level+", eta="+getEta().toFixed(2)+", q progress exponent="+getQExponent().toFixed(2)+", k divisor="+getKDivisor()+". "+
-            "After purchase: L="+nextLevel+", eta="+nextEta.toFixed(2)+", q progress exponent="+(Q_ETA_SCALE*0.01*nextLevel).toFixed(2)+", k divisor="+(K_TIME_DIVISOR*Math.pow(2,nextLevel))+". "+
-            "The normalized C share is between 0 and 1. More C helps k approach its speed limit; one level can slow k while improving q.";
+        return "eta: "+getEta().toFixed(2)+" -> "+nextEta.toFixed(2)+". "+cExponent.info;
     };
-    fullRow=makeMilestone(5,1,"Symmetric row sum","Replace the current coefficient with S0, the sum of coefficients collected at both ends of the row. The centre is counted only once.");
-    refinement=makeMilestone(6,2,"Fourth-moment refinement","Decrease nu by 0.1 to strengthen M4. Its denominator is (n + 1) raised to nu. Initially nu is 2.");
-    variance=makeMilestone(7,1,"Second central moment","Add M2: four times S2 divided by (n + 1). S2 sums squared distances from the row centre, weighted by the collected binomial coefficients.");
-    fourthMoment=makeMilestone(8,1,"Fourth central moment","Add M4: sixteen times S4 divided by (n + 1) raised to nu. S4 sums fourth powers of distances from the row centre, weighted by the collected coefficients. Nu starts at 2; each refinement reduces it by 0.1.");
+    fullRow=makeMilestone(5,1,"Use the symmetric sum "+Utils.getMath("S_0"),"Sum coefficients from both row ends through "+Utils.getMath("\\lfloor k\\rfloor")+"; count the centre once.");
+    refinement=makeMilestone(6,2,"Strengthen "+Utils.getMath("M_4"),"Reduce the denominator exponent of "+Utils.getMath("M_4")+" by 0.1.");
+    refinement.getInfo = (amount) => {
+        let nextLevel=Math.min(refinement.maxLevel,Math.max(0,refinement.level+amount));
+        return "Denominator exponent: "+(2-0.1*refinement.level).toFixed(1)+" -> "+(2-0.1*nextLevel).toFixed(1)+".";
+    };
+    variance=makeMilestone(7,1,"Add the "+Utils.getMath("M_2")+" term",Utils.getMath("M_2=\\frac{4S_2}{n+1}")+". "+Utils.getMath("S_2")+": sum of coefficient-weighted squared distances from centre.");
+    fourthMoment=makeMilestone(8,1,"Add the "+Utils.getMath("M_4")+" term",Utils.getMath(getM4Formula(0))+". "+Utils.getMath("S_4")+": sum of coefficient-weighted fourth-power distances from centre.");
+    fourthMoment.getInfo = (amount) => Utils.getMath(getM4Formula(refinement.level))+". "+Utils.getMath("S_4")+": sum of coefficient-weighted fourth-power distances from centre.";
     milestoneOrder=[b2Term,c2Term,a1Exp,pascalBoost,cExponent,fullRow,variance,fourthMoment,refinement];
     updateAvailability();
 };
@@ -186,7 +187,7 @@ var getSecondaryEquation = () => {
     let cPower=cExponent.level>0?"^{\\eta}":"";
     let kRate="\\frac{C"+cPower+"}{"+getKDivisor()+"(1+B+C"+cPower+")}";
     return "\\begin{array}{c}\\dot k="+kRate+",\\quad 0\\le k\\le\\left\\lfloor\\frac{n}{2}\\right\\rfloor \\\\ "+
-      "B=b_1"+(b2Term.level>0?"b_2":"")+",\\quad C=c_1"+(c2Term.level>0?"c_2":"")+"\\end{array}";
+      "B=b_1"+(b2Term.level>0?"b_2":"")+",\\quad C=c_1"+(c2Term.level>0?"c_2":"")+",\\quad\\tau =\\rho^{"+TAU_EXPONENT+"}\\end{array}";
 };
 var getTertiaryEquation = () => {
     theory.tertiaryEquationScale=0.8;
